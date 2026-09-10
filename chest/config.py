@@ -14,17 +14,29 @@ DATA_DIR = ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 GRANTS_CACHE = DATA_DIR / "grants_cache.json"
-LEDGER_FILE = DATA_DIR / "ledger.json"
+LEDGER_FILE = DATA_DIR / "ledger.json"          # pre-accounts, kept for migration
+LEDGERS_DIR = DATA_DIR / "ledgers"              # one file per account
+ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 
 AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
 BEDROCK_MODEL_ID = os.getenv(
     "BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 )
 
+# Offline dev switch. Swaps BedrockModel for a rule-based stand-in so the
+# plumbing can be run without model access. Never set this in deployment —
+# see chest/agents/fake_model.py for what it does and does not prove.
+CHEST_FAKE_MODEL = os.getenv("CHEST_FAKE_MODEL", "") not in ("", "0", "false")
+
 CHEST_STORE = os.getenv("CHEST_STORE", "local")
 DDB_LEDGER_TABLE = os.getenv("DDB_LEDGER_TABLE", "chest-ledger")
 
+# Where the signup page is reachable. Local by default; set it to the ngrok
+# https URL so the code the bot hands out points somewhere a phone can open.
+PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8000").rstrip("/")
+
 CHEST_CHANNEL = os.getenv("CHEST_CHANNEL", "telegram")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")

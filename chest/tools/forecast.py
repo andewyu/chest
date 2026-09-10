@@ -42,12 +42,12 @@ class Gap:
 
 
 def forecast(
-    store: LedgerStore | None = None,
+    store: LedgerStore,
     horizon_days: int = 365,
     lookback_days: int = 120,
     today: date | None = None,
 ) -> Gap:
-    store = store or LedgerStore()
+    """Project one account's books forward. The store carries the account."""
     today = today or date.today()
     entries = store.posted()
 

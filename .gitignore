@@ -9,8 +9,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+# Generated runtime state: caches, books, and the accounts file (which holds
+# link codes). Nothing in data/ is source.
 data/grants_cache.json
 data/ledger.json
+data/accounts.json
+data/ledgers/
 dist/
 build/
 *.egg-info/

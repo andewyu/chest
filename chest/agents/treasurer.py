@@ -6,81 +6,258 @@ answers balance questions, and can kick off the gap-to-grant sweep on demand.
 
 The background sweep (EventBridge -> graph) is the same graph; this agent is
 the interactive path into it.
+
+One agent per account, per channel identity. The tools are built inside
+`_tools(account)` and close over that account's ledger, so a treasurer's tools
+have no way to name another org's entries — the isolation is in what the tool
+can reach, not in a rule the model is asked to follow. Conversation history is
+per identity too, so "yes" always confirms *that* thread's pending entry.
 """
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from datetime import date
 
 from strands import Agent, tool
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.models import BedrockModel
 
-from chest.config import BEDROCK_MODEL_ID, ORG
+from chest.agents.voice import compose
+from chest.config import BEDROCK_MODEL_ID, CHEST_FAKE_MODEL
+from chest.store.accounts import Account
 from chest.store.ledger import Entry, LedgerStore
 from chest.tools import forecast as fc
 
-STORE = LedgerStore()
 
+def _money(amount: float) -> str:
+    """Format money once, here, so the model only ever copies a string.
 
-@tool
-def log_transaction(amount: float, kind: str, memo: str, occurred_on: str = "") -> dict:
-    """Stage a transaction as PENDING. It does not count until confirmed.
-
-    amount: signed — income positive, expense negative.
-    kind: dues | donation | grant | expense | other
+    Handing a model a raw float and a rule about commas is a way to get
+    "$9720.00" in a text thread. Handing it a finished string is not.
     """
-    entry = STORE.log(
-        Entry(
-            amount=float(amount),
-            kind=kind,  # type: ignore[arg-type]
-            memo=memo,
-            occurred_on=occurred_on or date.today().isoformat(),
+    return f"${amount:,.2f}"
+
+
+def _human_date(iso: str | None) -> str:
+    """2027-01-31 -> "Jan 31, 2027". Nobody reads ISO dates out loud."""
+    if not iso:
+        return ""
+    try:
+        d = date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    year = "" if d.year == date.today().year else f", {d.year}"
+    return f"{d.strftime('%b')} {d.day}{year}"
+
+
+def _tools(account: Account) -> list:
+    """This account's four tools, closed over this account's ledger."""
+    store = LedgerStore(account.id)
+
+    @tool
+    def log_transaction(amount: float, kind: str, memo: str, occurred_on: str = "") -> dict:
+        """Stage a transaction as PENDING. It does not count until confirmed.
+
+        amount: signed — income positive, expense negative.
+        kind: dues | donation | grant | expense | other
+        """
+        entry = store.log(
+            Entry(
+                amount=float(amount),
+                kind=kind,  # type: ignore[arg-type]
+                memo=memo,
+                occurred_on=occurred_on or date.today().isoformat(),
+            )
         )
+        direction = "out" if entry.amount < 0 else "in"
+        when = (
+            ""
+            if entry.occurred_on == date.today().isoformat()
+            else f" on {_human_date(entry.occurred_on)}"
+        )
+        return {
+            "id": entry.id,
+            "state": entry.state,
+            "amount_display": _money(abs(entry.amount)),
+            "direction": direction,
+            # Read this back verbatim. entry.cite() is the machine format — ISO
+            # date and a minus sign — and the voice rules say neither of those
+            # goes in front of a human. cite() stays for grant-draft provenance.
+            "readback": f"{_money(abs(entry.amount))} {direction} for {entry.memo}{when}",
+        }
+
+    @tool
+    def confirm_transaction(entry_id: str) -> dict:
+        """Post a pending transaction after the human confirms it."""
+        entry = store.confirm(entry_id)
+        if entry is None:
+            return {"ok": False, "error": "no such pending entry"}
+        balance = store.balance()
+        return {
+            "ok": True,
+            "id": entry.id,
+            "balance": balance,
+            "balance_display": _money(balance),
+        }
+
+    @tool
+    def discard_transaction(entry_id: str) -> dict:
+        """Throw away a pending transaction the human rejected."""
+        store.discard(entry_id)
+        return {"ok": True}
+
+    @tool
+    def current_balance() -> dict:
+        """What's in the chest right now, and the near-term outlook.
+
+        Fields don't overlap on purpose: gap.summary() restates the balance, and
+        handing the model both gets you a reply that says the balance twice.
+        """
+        gap = fc.forecast(store)
+        balance = store.balance()
+        out = {
+            "balance": balance,
+            "balance_display": _money(balance),
+            "monthly_net_display": f"{_money(abs(gap.monthly_net))}/mo "
+            f"{'out' if gap.monthly_net < 0 else 'in'}",
+            "shortfall": gap.is_real,
+        }
+        if gap.is_real:
+            out["short_by_display"] = _money(gap.amount)
+            out["runs_out_on"] = _human_date(gap.goes_negative_on)
+        return out
+
+    @tool
+    def recent_entries(matching: str = "", kind: str = "", limit: int = 10) -> dict:
+        """Look up posted entries.
+
+        matching: search every posted entry's memo for this text. Use it
+            whenever they name a thing — "summer program", "insurance", "dues".
+            Without it you only get the newest few, which is NOT the whole
+            ledger: never answer "we have no record of that" from an unfiltered
+            list. Search first, then say it isn't there.
+        kind: dues | donation | grant | expense | other
+        limit: how many entries to return, newest first.
+        """
+        entries = [e for e in store.posted()]
+        if matching.strip():
+            needle = matching.strip().lower()
+            entries = [e for e in entries if needle in e.memo.lower()]
+        if kind.strip():
+            entries = [e for e in entries if e.kind == kind.strip()]
+        entries.sort(key=lambda e: e.occurred_on, reverse=True)
+
+        shown = entries[: max(1, min(limit, 50))]
+        # Total every match, not just the ones shown — a model asked "how much
+        # did we spend on X" will otherwise add up the visible rows and be
+        # confidently wrong.
+        total = sum(e.amount for e in entries)
+        return {
+            "query": matching or kind or "most recent",
+            "matches": len(entries),
+            "showing": len(shown),
+            "total_display": f"{_money(abs(total))} {'out' if total < 0 else 'in'}",
+            "searched_whole_ledger": bool(matching.strip() or kind.strip()),
+            "entries": [
+                {
+                    "id": e.id,
+                    "date": _human_date(e.occurred_on),
+                    "amount_display": _money(abs(e.amount)),
+                    "direction": "out" if e.amount < 0 else "in",
+                    "kind": e.kind,
+                    "memo": e.memo,
+                }
+                for e in shown
+            ],
+        }
+
+    return [
+        log_transaction,
+        confirm_transaction,
+        discard_transaction,
+        current_balance,
+        recent_entries,
+    ]
+
+
+def _role(account: Account) -> str:
+    return (
+        f"You are Chest, the treasurer for {account.name}. You keep the books for "
+        "a small volunteer-run nonprofit and you talk to one person: a volunteer "
+        "with a day job and no finance background, over a text thread on their "
+        "phone.\n\n"
+        "WHAT YOU DO\n\n"
+        "- Money moved? Call log_transaction, read the entry back in one line, ask "
+        "them to confirm. Nothing posts before they say yes.\n"
+        "- 'yes' / 'yep' / 'y' / 'ok' confirms the most recent pending entry in "
+        "this thread. 'no' / 'nope' discards it.\n"
+        "- Balance questions get the number and one line of context, nothing more.\n"
+        "- 'what did we spend on X' means searching the books for X before you "
+        "answer. Never tell them there's no record of something when all you "
+        "did was glance at the newest few entries.\n"
+        "- Totals come from the tool, not from you adding up rows.\n"
+        "- If they're vague about an amount or what it was for, ask one short "
+        "question. One. Don't interview them.\n\n"
+        f"Everything you can reach is {account.name}'s books and nothing else. "
+        "You have no way to see another organization's money, and you should "
+        "never imply otherwise.\n\n"
+        "Never name your own tools, fields, or files to them — no 'recent_entries', "
+        "no 'the ledger file'. They don't know what those are and shouldn't have "
+        "to. Say what you can and can't see in plain words: 'I've got everything "
+        "back to March' or 'that's older than what I have'."
     )
-    return {"id": entry.id, "state": entry.state, "confirm_prompt": entry.cite()}
 
 
-@tool
-def confirm_transaction(entry_id: str) -> dict:
-    """Post a pending transaction after the human confirms it."""
-    entry = STORE.confirm(entry_id)
-    if entry is None:
-        return {"ok": False, "error": "no such pending entry"}
-    return {"ok": True, "id": entry.id, "balance": STORE.balance()}
+def _model():
+    if CHEST_FAKE_MODEL:
+        from chest.agents.fake_model import FakeModel
+
+        return FakeModel(model_id=BEDROCK_MODEL_ID)
+    return BedrockModel(model_id=BEDROCK_MODEL_ID)
 
 
-@tool
-def discard_transaction(entry_id: str) -> dict:
-    """Throw away a pending transaction the human rejected."""
-    STORE.discard(entry_id)
-    return {"ok": True}
+def _build(account: Account) -> Agent:
+    """A fresh treasurer for one account, with an empty history."""
+    return Agent(
+        model=_model(),
+        name="treasurer",
+        system_prompt=compose(_role(account)),
+        conversation_manager=SlidingWindowConversationManager(window_size=40),
+        tools=_tools(account),
+    )
 
 
-@tool
-def current_balance() -> dict:
-    """What's in the chest right now, and the near-term outlook."""
-    gap = fc.forecast()
-    return {"balance": STORE.balance(), "outlook": gap.summary()}
+# (identity key, account id) -> Agent. Bounded so a public bot can't grow this
+# without limit; the oldest thread falls out of memory first. Process-local by
+# design — the durable record is the ledger, not the chat history. The account
+# id is part of the key so a re-linked phone can never inherit the agent, and
+# therefore the tools, of the org it just left.
+_SESSIONS: "OrderedDict[tuple[str, str], Agent]" = OrderedDict()
+_MAX_SESSIONS = 200
 
 
-TREASURER = Agent(
-    model=BedrockModel(model_id=BEDROCK_MODEL_ID),
-    name="treasurer",
-    system_prompt=(
-        f"You are Chest, the treasurer for {ORG.name}. You talk to a volunteer "
-        "with a day job and no finance background, over a chat thread on their phone.\n\n"
-        "Rules:\n"
-        "- Keep every reply to one or two short lines. This is a text message, "
-        "not a report.\n"
-        "- When they mention money moving, call log_transaction, then read the "
-        "entry back and ask them to confirm. Never post without confirmation.\n"
-        "- 'yes' / 'yep' / 'y' confirms the most recent pending entry.\n"
-        "- Never invent a number. If you don't have it in the ledger, say so.\n"
-        "- You never submit a grant application. You draft; a human files.\n"
-        "- No emoji unless they use one first."
-    ),
-    tools=[log_transaction, confirm_transaction, discard_transaction, current_balance],
-)
+def for_session(session_id: str, account: Account) -> Agent:
+    """The agent for one chat thread on one account's books."""
+    key = (session_id, account.id)
+    agent = _SESSIONS.pop(key, None)
+    if agent is None:
+        agent = _build(account)
+    _SESSIONS[key] = agent
+    while len(_SESSIONS) > _MAX_SESSIONS:
+        _SESSIONS.popitem(last=False)
+    return agent
+
+
+def reset_session(session_id: str, account: Account | None = None) -> None:
+    """Forget a thread's history. The ledger is untouched.
+
+    With no account, forgets this identity's thread on every account it has
+    talked to — which is what unlinking means.
+    """
+    for key in [k for k in _SESSIONS if k[0] == session_id and (account is None or k[1] == account.id)]:
+        _SESSIONS.pop(key, None)
+
 
 _AFFIRM = re.compile(r"^\s*(y|yes|yep|yeah|ok|okay|confirm|approve)\b", re.I)
 _EDIT = re.compile(r"^\s*edit\b", re.I)

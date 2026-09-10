@@ -1,14 +1,22 @@
 from datetime import date
 
+import pytest
+
 from chest.tools.forecast import forecast
 from chest.store.ledger import LedgerStore
 from scripts.seed_ledger import build
 
 
-def test_seeded_ledger_produces_a_real_gap():
-    store = LedgerStore()
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    """A ledger of its own, in a directory of its own. Never the real books."""
+    monkeypatch.setattr("chest.store.ledger.LEDGERS_DIR", tmp_path)
+    return LedgerStore("acct_test")
+
+
+def test_seeded_ledger_produces_a_real_gap(store):
     store._replace_all(build())
-    gap = forecast(store=store)
+    gap = forecast(store)
     assert gap.is_real, gap.summary()
     assert gap.amount > 0
     assert gap.goes_negative_on is not None

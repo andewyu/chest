@@ -5,7 +5,7 @@ more than dues cover, and an insurance renewal that lands in the fall. The
 forecast should surface a gap in the low five figures — which is exactly the
 band where real federal opportunities live.
 
-    python -m scripts.seed_ledger
+    python -m scripts.seed_ledger <account_id>
 """
 from __future__ import annotations
 
@@ -64,12 +64,27 @@ def build(today: date | None = None) -> list[Entry]:
 
 
 def main() -> None:
-    store = LedgerStore()
+    import sys
+
+    from chest.store.accounts import AccountStore
+
+    accounts = AccountStore().all()
+    account_id = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not account_id:
+        if len(accounts) != 1:
+            print("usage: python -m scripts.seed_ledger <account_id>")
+            print("accounts:")
+            for a in accounts:
+                print(f"  {a.id}  {a.name}")
+            raise SystemExit(1)
+        account_id = accounts[0].id
+
+    store = LedgerStore(account_id)
     entries = build()
     store._replace_all(entries)  # local dev only
     from chest.tools.forecast import forecast
 
-    gap = forecast()
+    gap = forecast(store)
     print(f"Seeded {len(entries)} entries.")
     print(gap.summary())
     for line in gap.evidence:
