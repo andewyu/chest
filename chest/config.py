@@ -17,7 +17,7 @@ GRANTS_CACHE = DATA_DIR / "grants_cache.json"
 LEDGER_FILE = DATA_DIR / "ledger.json"
 
 AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-5")
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 CHEST_STORE = os.getenv("CHEST_STORE", "local")
 DDB_LEDGER_TABLE = os.getenv("DDB_LEDGER_TABLE", "chest-ledger")
