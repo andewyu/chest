@@ -47,7 +47,7 @@ EventBridge Scheduler (background sweep, no human trigger)
 └───────────────────────────────────────────────────┘
         │                              │
         ▼                              ▼
-  Ledger store (DynamoDB)     interrupt() → WhatsApp/Telegram
+  Ledger store (DynamoDB)     interrupt() → WhatsApp/Telegram/iMessage
   balances, dues, history     "Reply YES to approve / EDIT"
 ```
 
@@ -65,7 +65,7 @@ Human-in-the-loop is a Strands `interrupt()` at the protocol level — not an `i
 
 | Layer | Choice |
 |---|---|
-| Input channel | Twilio WhatsApp Sandbox webhook / Telegram Bot API |
+| Input channel | Twilio WhatsApp Sandbox webhook / Telegram Bot API / iMessage via [Blooio](https://blooio.com) (see honesty note below) |
 | Orchestration | Strands Agents SDK, multi-agent graph (`GraphBuilder`) |
 | Runtime | Amazon Bedrock AgentCore Runtime |
 | Memory | AgentCore Memory (donor names, past rejections, recurring expenses) |
@@ -79,7 +79,7 @@ Human-in-the-loop is a Strands `interrupt()` at the protocol level — not an `i
 We'd rather disclose a constraint than have a judge discover it.
 
 - **The agent never submits a grant application.** Grants.gov submission legally requires a human Authorized Organization Representative with SAM.gov registration, and NIH policy (NOT-OD-25-132) excludes applications substantially developed by AI. Chest drafts; a human approves and files. This is a trust feature.
-- **Channel:** the agent is channel-agnostic, but US SMS requires A2P 10DLC carrier registration that takes 10–15 days, and Apple provides no public iMessage send API. Today's demo runs on the **Twilio WhatsApp Sandbox / Telegram** over the identical webhook. SMS and iMessage are roadmap, not shipped.
+- **Channel:** the agent is channel-agnostic. US SMS requires A2P 10DLC carrier registration that takes 10–15 days, so that's still roadmap. Apple itself provides no public iMessage send API — full stop. The demo's iMessage channel runs through **[Blooio](https://blooio.com)**, a third-party relay service that operates real Apple infrastructure to deliver blue-bubble messages; it is **not** an Apple-sanctioned integration, and we say so on stage. The Twilio WhatsApp Sandbox and Telegram channels remain the standard, no-relay-dependency demo path and hit the identical webhook handler.
 - **Data:** federal opportunities shown are **real and live** from Grants.gov. Foundation/private grant data (Candid) is paywalled at $219+/month — it's a paid-tier roadmap item, not something we faked.
 - Every dollar figure in a generated draft traces to a specific ledger entry.
 
@@ -109,6 +109,12 @@ python -m scripts.seed_ledger        # seed a demo nonprofit's ledger
 python -m scripts.cache_grants       # cache ~250 live Grants.gov opportunities
 python -m chest.channels.webhook     # run the chat webhook locally
 ```
+
+The webhook serves all three channels at once (`/whatsapp`, `/telegram`, `/imessage`).
+Set `CHEST_CHANNEL` in `.env` to pick which one the background sweep (`scripts/sweep.py`)
+notifies over. For iMessage, sign up at [blooio.com](https://blooio.com), set
+`BLOOIO_API_KEY` / `BLOOIO_WEBHOOK_SECRET` / `BLOOIO_FROM_NUMBER`, and register
+`<ngrok-url>/imessage` as the webhook URL in the Blooio dashboard.
 
 See [PLAN.md](PLAN.md) for the four-day build plan.
 

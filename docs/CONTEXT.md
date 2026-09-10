@@ -42,12 +42,13 @@ Do not claim "no existing tool connects budget monitoring to grant discovery" as
 
 ## 5. Design model: conversational-first (Poke-inspired), channel corrected
 
-Same design philosophy as the original doc, with one hard fix: **drop SMS and iMessage as the launch channel.**
+Same design philosophy as the original doc, with one hard fix: **drop SMS as a launch channel, and be precise about what "iMessage" means.**
 
-- **iMessage is not usable.** Apple provides no public API for sending iMessages. "Messages for Business" requires becoming an Apple-approved Messaging Service Provider — out of scope entirely. Any "blue bubble" integration you'd find is an unofficial Mac-relay hack. Do not claim iMessage in the pitch or README.
-- **US SMS (Twilio) is also not usable in this timeframe.** As of Sept 2023, Twilio fully blocks all unregistered US 10DLC traffic. A2P 10DLC campaign review takes 10–15 days. Trial accounts cannot register for A2P 10DLC at all. Toll-free verification takes 3–5 business days, which lands after the Sept 14 deadline even if submitted today.
-- **Use the Twilio WhatsApp Sandbox instead.** It requires no sender registration and is available instantly, with the exact same webhook code you'd use for SMS — so the demo, the UX, and the "no app install" pitch are unaffected. Telegram Bot API is a reliable fallback (free, instant token).
-- **On stage, say this plainly:** "The agent is channel-agnostic — SMS to US numbers requires carrier registration that takes 10–15 days, so today's demo runs on WhatsApp over the identical webhook." Judges respect disclosed constraints and penalize discovered ones.
+- **Apple itself provides no public API for sending iMessages.** "Messages for Business" requires becoming an Apple-approved Messaging Service Provider — out of scope entirely. That has not changed.
+- **iMessage is shipped anyway, via a third-party relay: [Blooio](https://blooio.com).** Blooio operates real Apple infrastructure behind a REST API (`POST /v2/api/chats/{chatId}/messages`, bearer-token auth, inbound delivered as `message.received` webhooks). It delivers genuine blue-bubble iMessages with SMS/RCS fallback. **It is not an Apple-sanctioned integration** — say this explicitly in the pitch and README. Wired in at `chest/channels/webhook.py` (`/imessage` route, `send_blooio()`), gated behind `CHEST_CHANNEL=imessage` and `BLOOIO_API_KEY`.
+- **US SMS (Twilio) is still not usable in this timeframe.** As of Sept 2023, Twilio fully blocks all unregistered US 10DLC traffic. A2P 10DLC campaign review takes 10–15 days. Trial accounts cannot register for A2P 10DLC at all. Toll-free verification takes 3–5 business days, which lands after the Sept 14 deadline even if submitted today.
+- **Twilio WhatsApp Sandbox and Telegram remain the primary, no-third-party-relay demo path.** No sender registration, available instantly, identical webhook code. Keep at least one of these as the fallback if Blooio has any hiccup on demo day — it's a new paid dependency added late in the build.
+- **On stage, say this plainly:** "The agent is channel-agnostic. SMS to US numbers requires carrier registration that takes 10–15 days. iMessage here runs through Blooio, a relay service operating real Apple accounts — not an Apple API, since Apple doesn't publish one. WhatsApp and Telegram run over the identical webhook with no such dependency." Judges respect disclosed constraints and penalize discovered ones.
 
 Everything else from the original design model still holds and is good:
 - **Recipes**: pre-built automations ("remind members about dues on the 1st," "send me a Friday balance summary") plus user-authored custom ones in plain English.
@@ -76,7 +77,7 @@ Read this section once before writing any pitch copy, so nobody on the team acci
 | "Over half of nonprofits that skip grants lack staff/time" | Actually over half of the ~9% who skip grants, not over half of all nonprofits | Restated precisely (§2, item 3) |
 | "No existing tool connects budget monitoring to grant discovery and drafting" | False as a blanket claim — Instrumentl and GrantFlow already do adjacent versions | Narrowed to the gap-as-retrieval-key claim (§4) |
 | "It texts a one-line summary and the draft — reply YES to submit" | Grants.gov submission legally requires a human Authorized Organization Representative with SAM.gov registration; NIH explicitly will not consider applications substantially developed by AI (NOT-OD-25-132), with post-award referral to research integrity | **"YES" now means approve the draft, not submit it.** The agent never submits anything. State this as a deliberate safety design, not a missing feature. |
-| Delivered over "iMessage, SMS, WhatsApp, and Telegram" | No public iMessage API exists; US SMS is carrier-blocked for the timeline | Launch channel is **WhatsApp Sandbox + Telegram** only. Frame SMS/iMessage as roadmap, not shipped. |
+| Delivered over "iMessage, SMS, WhatsApp, and Telegram" | No *Apple* iMessage API exists; US SMS is carrier-blocked for the timeline | Launch channels are **WhatsApp Sandbox + Telegram** (no third-party dependency) plus **iMessage via Blooio** (a disclosed third-party relay). SMS stays roadmap. |
 | Name: "Chest" | Collides with an existing iOS app of the same name, a UK fintech, and unwinnable SEO | **Kept as Chest** — acceptable risk for a US-only hackathon launch (see §3) |
 | Single router agent + two sub-agents | Technically thin — every judge will have seen this orchestration pattern | Upgraded to a real 5-agent Strands graph (§9) |
 
@@ -134,7 +135,7 @@ EventBridge Scheduler (background sweep, no human trigger)
 **Stack:**
 | Layer | Choice |
 |---|---|
-| Input channel | Twilio WhatsApp Sandbox webhook, or Telegram Bot API |
+| Input channel | Twilio WhatsApp Sandbox webhook, Telegram Bot API, or iMessage via Blooio (third-party relay) |
 | Orchestration | Strands Agents SDK, multi-agent graph (`GraphBuilder`) |
 | Runtime | Amazon Bedrock AgentCore Runtime — deploy for real, this scores points |
 | Memory | AgentCore Memory (short-term + long-term) — donor names, past rejections, recurring expenses |
@@ -171,7 +172,7 @@ Foundation/private grant data (Candid) is paywalled ($219+/month) — don't fake
 
 - **The agent never submits a grant application.** It drafts; a human approves and files. This is required by law (Grants.gov needs a human Authorized Organization Representative with SAM.gov registration) and by at least one major funder's explicit policy (NIH's NOT-OD-25-132 excludes applications substantially developed by AI, with post-award consequences for violations). Frame this as a trust feature, not a limitation you ran out of time to build.
 - Every dollar figure in a draft should be traceable to a specific ledger entry — show this provenance in the UI/demo, it's a cheap trust signal.
-- Be upfront in the video about which channel is live (WhatsApp/Telegram) versus roadmap (SMS, iMessage) and which data is live (Grants.gov federal) versus roadmap (paywalled foundation data).
+- Be upfront in the video about which channel is live (WhatsApp/Telegram, and iMessage via the disclosed third-party relay Blooio) versus roadmap (SMS), and which data is live (Grants.gov federal) versus roadmap (paywalled foundation data).
 
 ## 13. Judging-criteria fit
 

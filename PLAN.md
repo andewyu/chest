@@ -215,5 +215,6 @@ and penalize discovered ones.** Twenty seconds of honesty buys you the rest.
 - The agent **never submits** an application. Say it out loud in the video.
 - Every dollar figure in a draft cites a ledger entry.
 - Don't reintroduce the $104B figure or the $4–7B matching-gifts stat.
-- Don't claim iMessage or SMS as shipped.
+- Don't claim SMS as shipped, and don't claim the iMessage channel is an Apple-sanctioned
+  integration — it runs through Blooio, a third-party relay. Say that plainly on camera.
 - Don't claim "no tool connects budget monitoring to grant discovery."

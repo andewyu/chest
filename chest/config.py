@@ -30,6 +30,13 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 
+# iMessage via Blooio (https://blooio.com) — a third-party relay service, not
+# an Apple-sanctioned API. Apple publishes no public API for sending iMessage;
+# see the honesty note in README.md before treating this as "official."
+BLOOIO_API_KEY = os.getenv("BLOOIO_API_KEY", "")
+BLOOIO_WEBHOOK_SECRET = os.getenv("BLOOIO_WEBHOOK_SECRET", "")
+BLOOIO_FROM_NUMBER = os.getenv("BLOOIO_FROM_NUMBER", "")
+
 
 @dataclass(frozen=True)
 class OrgProfile:

@@ -4,14 +4,22 @@ EventBridge Scheduler invokes this on a cron. It runs the graph, and only
 reaches out to a human if there is an actual decision to make. That restraint
 is the product.
 
-    python -m scripts.sweep --chat-id <telegram chat id>
+    python -m scripts.sweep --chat-id <telegram chat id, or imessage phone number>
 """
 from __future__ import annotations
 
 import argparse
 
-from chest.channels.webhook import send_telegram
+from chest.channels.webhook import send_blooio, send_telegram
+from chest.config import CHEST_CHANNEL
 from chest.tools.forecast import forecast
+
+
+def _notify(chat_id: str, message: str) -> None:
+    if CHEST_CHANNEL == "imessage":
+        send_blooio(chat_id, message)
+    else:
+        send_telegram(chat_id, message)
 
 
 def main() -> None:
@@ -37,7 +45,7 @@ def main() -> None:
     if args.dry_run or not args.chat_id:
         print(message)
         return
-    send_telegram(args.chat_id, message)
+    _notify(args.chat_id, message)
 
 
 def lambda_handler(event, context):  # AgentCore / Lambda entry point
@@ -52,7 +60,7 @@ def lambda_handler(event, context):  # AgentCore / Lambda entry point
     )
     chat_id = (event or {}).get("chat_id", "")
     if chat_id:
-        send_telegram(chat_id, str(result))
+        _notify(chat_id, str(result))
     return {"status": "notified", "gap": gap.amount}
 
 
