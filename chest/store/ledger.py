@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Iterable, Literal
 
 from chest.config import CHEST_STORE, DDB_LEDGER_TABLE, LEDGER_FILE
@@ -31,7 +31,7 @@ class Entry:
     state: EntryState = "pending"
     recurring: bool = False
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    logged_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    logged_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def cite(self) -> str:
         sign = "+" if self.amount >= 0 else "-"
