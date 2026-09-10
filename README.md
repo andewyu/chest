@@ -149,7 +149,19 @@ It makes one real Bedrock call and, when it fails, names the thing you have to
 go do — the Anthropic use-case form, a missing `us.` inference-profile prefix,
 a retired model version, or absent credentials.
 
-Then run the two halves. Signup page:
+Then start the demo:
+
+```bash
+python -m scripts.run_demo
+```
+
+One command brings up the signup page and the Telegram bot together. It makes a
+real Bedrock call first and runs live if that works; if it doesn't, it prints
+why and falls back to the offline stand-in, loudly, because a rule-based
+stand-in must never be mistaken for the model on stage. `--real` refuses to
+start without Bedrock, which is what you want before presenting.
+
+Or run the two halves yourself. Signup page:
 
 ```bash
 uvicorn chest.channels.webhook:app --reload --port 8000
