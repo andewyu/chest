@@ -20,7 +20,7 @@ from chest.config import BEDROCK_MODEL_ID, ORG
 from chest.store.ledger import LedgerStore
 from chest.tools import forecast as fc
 from chest.tools import grants_gov
-from chest.tools.provenance import validate_draft
+from chest.tools.provenance import enforce_provenance, validate_draft
 
 MODEL = BedrockModel(model_id=BEDROCK_MODEL_ID)
 
@@ -129,8 +129,10 @@ SCREENER = Agent(
         f"(applicant type: {ORG.applicant_type}; annual budget "
         f"${ORG.annual_budget:,.0f}; state: {ORG.state}). "
         "For each candidate, call opportunity_detail and check applicant type, "
-        "org size, and any stated restrictions. Reject anything the org plainly "
-        "cannot win and say why in one line. Pass forward at most one opportunity: "
+        "org size, and stated restrictions using only the published record. Never "
+        "infer an unstated requirement. If the synopsis defers eligibility to an "
+        "attachment, flag that for human verification. Reject anything the org "
+        "plainly cannot win and say why in one line. Pass forward at most one opportunity: "
         "the best fit. Nobody's time gets spent drafting until you've done this."
     ),
     tools=[opportunity_detail],
@@ -162,6 +164,8 @@ REVIEWER = Agent(
         "opportunity's stated requirements: required sections, page/word limits, "
         "deadline, and eligibility. Flag every uncited dollar figure as a blocker. "
         "Then produce a ONE-LINE summary a volunteer treasurer can read on a phone, "
+        "Every dollar amount anywhere in your complete response, including that "
+        "summary, must carry a valid ledger citation. "
         "followed by the draft. End with: "
         "'Reply YES to approve this draft, or EDIT to tell me what to change.' "
         "Chest never submits an application. Do not imply that it does."
@@ -202,3 +206,21 @@ def get_graph():
     if GRAPH is None:
         GRAPH = build_graph()
     return GRAPH
+
+
+def reviewer_output(result) -> str:
+    """Return only the final reviewed node, never internal chain-of-work output."""
+    node_result = result.results.get("reviewer")
+    if node_result is None or not str(node_result).strip():
+        raise RuntimeError("grant graph did not produce a reviewed draft")
+    return str(node_result).removesuffix("\n")
+
+
+def run_gap_to_grant(gap_amount: float, goes_negative_on: str) -> str:
+    """Run the graph and return only output that passes the provenance gate."""
+    result = get_graph()(
+        f"The org is projected ${gap_amount:,.0f} short by {goes_negative_on}. "
+        "Find and draft the grant that closes it."
+    )
+    entry_ids = {entry.id for entry in LedgerStore().posted()}
+    return enforce_provenance(reviewer_output(result), entry_ids)

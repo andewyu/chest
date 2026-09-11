@@ -1,11 +1,13 @@
 from datetime import date
 
+from chest.store import ledger as ledger_module
 from chest.tools.forecast import forecast
 from chest.store.ledger import LedgerStore
 from scripts.seed_ledger import build
 
 
-def test_seeded_ledger_produces_a_real_gap():
+def test_seeded_ledger_produces_a_real_gap(tmp_path, monkeypatch):
+    monkeypatch.setattr(ledger_module, "LEDGER_FILE", tmp_path / "ledger.json")
     store = LedgerStore()
     store._replace_all(build())
     gap = forecast(store=store)
@@ -40,3 +42,31 @@ def test_open_ended_ceiling_matches_anything_above_floor():
     )
     assert o.brackets(500000)
     assert not o.brackets(100)
+
+
+def test_missing_award_range_does_not_match_every_gap():
+    from chest.tools.grants_gov import Opportunity
+
+    o = Opportunity(
+        id="3", number="X", title="t", agency="a", close_date=None,
+        award_floor=None, award_ceiling=None, estimated_funding=None,
+        number_of_awards=None, applicant_types=[], description="", url="",
+    )
+
+    assert not o.brackets(14849)
+
+
+def test_gap_matching_requires_mission_relevance_before_range_tightness():
+    from chest.tools.grants_gov import Opportunity, match_gap
+
+    def opportunity(id, title, floor, ceiling):
+        return Opportunity(
+            id=id, number="X", title=title, agency="a", close_date=None,
+            award_floor=floor, award_ceiling=ceiling, estimated_funding=None,
+            number_of_awards=None, applicant_types=[], description="", url="",
+        )
+
+    irrelevant = opportunity("1", "Overseas diplomatic exchange", 14000, 15000)
+    relevant = opportunity("2", "Inspire grants for small museums", 5000, 75000)
+
+    assert match_gap(14849, [irrelevant, relevant], ["museum"]) == [relevant]

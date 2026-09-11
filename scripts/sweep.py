@@ -12,6 +12,7 @@ import argparse
 
 from chest.channels.webhook import send_blooio, send_telegram
 from chest.config import CHEST_CHANNEL
+from chest.store.drafts import DraftStore
 from chest.tools.forecast import forecast
 
 
@@ -33,18 +34,14 @@ def main() -> None:
         print(f"No shortfall. Staying quiet. ({gap.summary()})")
         return
 
-    from chest.agents.graph import get_graph
+    from chest.agents.graph import run_gap_to_grant
 
-    graph = get_graph()
-    result = graph(
-        f"The org is projected ${gap.amount:,.0f} short by {gap.goes_negative_on}. "
-        f"Find and draft the grant that closes it."
-    )
-
-    message = str(result)
+    message = run_gap_to_grant(gap.amount, gap.goes_negative_on or "unknown date")
     if args.dry_run or not args.chat_id:
         print(message)
         return
+    if not message.startswith("BLOCKED:"):
+        DraftStore().stage(args.chat_id, message)
     _notify(args.chat_id, message)
 
 
@@ -52,15 +49,17 @@ def lambda_handler(event, context):  # AgentCore / Lambda entry point
     gap = forecast()
     if not gap.is_real:
         return {"status": "quiet", "summary": gap.summary()}
-    from chest.agents.graph import get_graph
+    from chest.agents.graph import run_gap_to_grant
 
-    result = get_graph()(
-        f"The org is projected ${gap.amount:,.0f} short by {gap.goes_negative_on}. "
-        f"Find and draft the grant that closes it."
-    )
+    message = run_gap_to_grant(gap.amount, gap.goes_negative_on or "unknown date")
     chat_id = (event or {}).get("chat_id", "")
-    if chat_id:
-        _notify(chat_id, str(result))
+    if not chat_id:
+        return {"status": "ready", "gap": gap.amount}
+    if message.startswith("BLOCKED:"):
+        _notify(chat_id, message)
+        return {"status": "blocked", "gap": gap.amount}
+    DraftStore().stage(chat_id, message)
+    _notify(chat_id, message)
     return {"status": "notified", "gap": gap.amount}
 
 

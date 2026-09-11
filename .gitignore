@@ -9,8 +9,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
-data/grants_cache.json
 data/ledger.json
+data/drafts.json
 data/sessions/
 dist/
 build/

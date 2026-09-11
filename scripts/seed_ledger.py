@@ -1,7 +1,7 @@
 """Seed a believable small-nonprofit ledger that produces a real shortfall.
 
-A community garden collective: modest dues income, a summer program that costs
-more than dues cover, and an insurance renewal that lands in the fall. The
+    A neighborhood heritage museum: modest membership income, a summer program
+    that costs more than dues cover, and an insurance renewal in the fall. The
 forecast should surface a gap in the low five figures — which is exactly the
 band where real federal opportunities live.
 
@@ -36,10 +36,10 @@ def build(today: date | None = None) -> list[Entry]:
     # Opening position
     add(200, 18400.00, "other", "Opening balance carried from prior year")
 
-    # Monthly dues — 34 members at $15, drifting down as the year goes on
+    # Monthly memberships — 34 members at $15, drifting down as the year goes on
     for m in range(7, 0, -1):
         members = 34 - (7 - m)
-        add(m * 30, members * 15.0, "dues", f"Monthly member dues ({members} members)", recurring=True)
+        add(m * 30, members * 15.0, "dues", f"Monthly memberships ({members} members)", recurring=True)
 
     # Two donations
     add(120, 2500.00, "donation", "Spring fundraiser — Hensley family gift")
@@ -47,18 +47,18 @@ def build(today: date | None = None) -> list[Entry]:
 
     # Recurring costs
     for m in range(7, 0, -1):
-        add(m * 30 - 3, -410.00, "expense", "Water utility — main plot irrigation", recurring=True)
-        add(m * 30 - 5, -265.00, "expense", "Tool shed rent", recurring=True)
+        add(m * 30 - 3, -410.00, "expense", "Utilities — exhibit and archive space", recurring=True)
+        add(m * 30 - 5, -265.00, "expense", "Off-site collection storage", recurring=True)
 
     # Summer program — the thing that breaks the budget
-    add(95, -3200.00, "expense", "Youth summer program — seeds, soil, raised beds")
+    add(95, -3200.00, "expense", "Youth summer program — exhibit materials and equipment")
     add(88, -1875.00, "expense", "Youth summer program — stipends for 3 teen leads")
-    add(61, -2400.00, "expense", "Youth summer program — second session materials")
+    add(61, -2400.00, "expense", "Youth summer program — oral-history recording sessions")
 
     # The obligation on the horizon
     add(20, -1980.00, "expense", "General liability insurance — annual renewal", recurring=True)
-    add(12, -640.00, "expense", "Soil remediation testing (city requirement)")
-    add(5, -318.00, "expense", "Replacement hoses and hand tools")
+    add(12, -640.00, "expense", "Archive humidity assessment")
+    add(5, -318.00, "expense", "Replacement display cases and hand tools")
 
     return entries
 

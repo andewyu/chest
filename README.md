@@ -47,7 +47,7 @@ EventBridge Scheduler (background sweep, no human trigger)
 └───────────────────────────────────────────────────┘
         │                              │
         ▼                              ▼
-  Ledger store (DynamoDB)     interrupt() → WhatsApp/Telegram/iMessage
+  Ledger store (local/DynamoDB)  approval prompt → chat channels
   balances, dues, history     "Reply YES to approve / EDIT"
 ```
 
@@ -55,11 +55,13 @@ EventBridge Scheduler (background sweep, no human trigger)
 |---|---|
 | **Forecaster** | Projects balance forward, outputs a dollar gap and the date it bites |
 | **Scout** | Queries Grants.gov for opportunities whose award range brackets the gap |
-| **Eligibility Screener** | Checks EIN, org age, budget size, applicant type before anyone drafts |
+| **Eligibility Screener** | Checks published applicant type, budget/size, geography, and restrictions; flags attachment-only rules for a human |
 | **Drafter** | Writes narrative + budget justification from real ledger figures, with provenance |
 | **Compliance Reviewer** | Checks the draft against the opportunity's stated requirements |
 
-Human-in-the-loop is a Strands `interrupt()` at the protocol level — not an `if` statement in app code.
+Human approval is explicit and Chest has no grant-submission tool. A resumable
+Strands protocol-level `interrupt()` is still planned; the current build must
+not be described as having that feature yet.
 
 ### Stack
 
@@ -68,9 +70,9 @@ Human-in-the-loop is a Strands `interrupt()` at the protocol level — not an `i
 | Input channel | Twilio WhatsApp Sandbox webhook / Telegram Bot API / iMessage via [Blooio](https://blooio.com) (see honesty note below) |
 | Orchestration | Strands Agents SDK, multi-agent graph (`GraphBuilder`) |
 | Runtime | Amazon Bedrock AgentCore Runtime |
-| Memory | AgentCore Memory (donor names, past rejections, recurring expenses) |
-| Identity | AgentCore Identity |
-| Observability | AgentCore Observability / OpenTelemetry traces |
+| Memory | Strands snapshot sessions locally; AgentCore Memory is planned |
+| Identity | Signed channel webhooks; AgentCore Identity is planned |
+| Observability | OpenTelemetry instrumentation, visible after AgentCore deployment |
 | Grant data | Grants.gov `search2` + `fetchOpportunity` (keyless) |
 | Receipt OCR (optional) | Amazon Textract `AnalyzeExpense` |
 
@@ -80,7 +82,11 @@ We'd rather disclose a constraint than have a judge discover it.
 
 - **The agent never submits a grant application.** Grants.gov submission legally requires a human Authorized Organization Representative with SAM.gov registration, and NIH policy (NOT-OD-25-132) excludes applications substantially developed by AI. Chest drafts; a human approves and files. This is a trust feature.
 - **Channel:** the agent is channel-agnostic. US SMS requires A2P 10DLC carrier registration that takes 10–15 days, so that's still roadmap. Apple itself provides no public iMessage send API — full stop. The demo's iMessage channel runs through **[Blooio](https://blooio.com)**, a third-party relay service that operates real Apple infrastructure to deliver blue-bubble messages; it is **not** an Apple-sanctioned integration, and we say so on stage. The Twilio WhatsApp Sandbox and Telegram channels remain the standard, no-relay-dependency demo path and hit the identical webhook handler.
-- **Data:** federal opportunities shown are **real and live** from Grants.gov. Foundation/private grant data (Candid) is paywalled at $219+/month — it's a paid-tier roadmap item, not something we faked.
+- **Data:** federal opportunities are retrieved from the live Grants.gov API and
+  cached before a demo for reliability. The checked-in snapshot and its refresh
+  date are documented in `data/README.md`. Foundation/private grant data
+  (Candid) is paywalled at $219+/month — it is a paid-tier roadmap item, not
+  something we faked.
 - Every dollar figure in a generated draft traces to a specific ledger entry.
 
 ## Competitive landscape
@@ -110,17 +116,20 @@ pip install -r requirements.txt
 cp .env.example .env      # fill in your keys
 
 python -m scripts.seed_ledger        # seed a demo nonprofit's ledger
-python -m scripts.cache_grants       # cache ~250 live Grants.gov opportunities
+python -m scripts.cache_grants       # refresh the live Grants.gov snapshot
 python -m chest.channels.webhook     # run the chat webhook locally
 ```
 
 The webhook serves all three channels at once (`/whatsapp`, `/telegram`, `/imessage`).
+All three fail closed when their webhook secret is missing or invalid. Telegram
+replies are safely split so a full draft does not exceed the platform's message limit.
 Set `CHEST_CHANNEL` in `.env` to pick which one the background sweep (`scripts/sweep.py`)
 notifies over. For iMessage, sign up at [blooio.com](https://blooio.com), set
 `BLOOIO_API_KEY` / `BLOOIO_WEBHOOK_SECRET` / `BLOOIO_FROM_NUMBER`, and register
 `<ngrok-url>/imessage` as the webhook URL in the Blooio dashboard.
 
-See [PLAN.md](PLAN.md) for the four-day build plan.
+See [PLAN.md](PLAN.md) for the four-day build plan and
+[docs/deployment.md](docs/deployment.md) for the prepared AgentCore deployment path.
 
 ## License
 
