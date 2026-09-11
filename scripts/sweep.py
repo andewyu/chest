@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from chest.store.accounts import Account, AccountStore  # noqa: E402
+from chest.store.drafts import DraftStore  # noqa: E402
 from chest.store.ledger import LedgerStore  # noqa: E402
 from chest.tools.forecast import forecast  # noqa: E402
 
@@ -44,12 +45,13 @@ def sweep_account(account: Account, accounts: AccountStore, notify: bool) -> dic
 
     print(f"  {account.name}: {gap.summary()}")
 
-    from chest.agents.graph import get_graph
+    from chest.agents.graph import run_gap_to_grant
 
     try:
-        result = get_graph(account)(
-            f"The org is projected ${gap.amount:,.0f} short by {gap.goes_negative_on}. "
-            f"Find and draft the grant that closes it."
+        message = run_gap_to_grant(
+            account,
+            gap.amount,
+            gap.goes_negative_on or "unknown date",
         )
     except Exception as exc:
         # A model outage must not take down the whole scheduled run. The other
@@ -57,13 +59,14 @@ def sweep_account(account: Account, accounts: AccountStore, notify: bool) -> dic
         print(f"  {account.name}: graph failed — {type(exc).__name__}: {exc}")
         return {"account_id": account.id, "status": "error", "error": str(exc)}
 
-    message = str(result)
     targets = accounts.identities_for(account.id)
     if not notify or not targets:
         print(message)
         return {"account_id": account.id, "status": "drafted", "notified": 0}
 
     for identity in targets:
+        if not message.startswith("BLOCKED:"):
+            DraftStore().stage(f"{account.id}:{identity.key}", message)
         _notify(identity.key, message)
     return {"account_id": account.id, "status": "notified", "notified": len(targets)}
 

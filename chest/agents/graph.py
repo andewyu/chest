@@ -2,13 +2,13 @@
 
     Forecaster -> Scout -> Eligibility Screener -> Drafter -> Compliance Reviewer
 
-Five agents, one direction, one human interrupt at the end. Each agent has a
+Five agents, one direction, one human approval boundary at the end. Each agent has a
 narrow job and hands a typed payload to the next; nothing here is a general
 "do the thing" prompt.
 
-The human-in-the-loop step is a Strands `interrupt()` at the protocol level,
-not an if-statement in application code — that is the point of the design, and
-it's the part worth showing a judge.
+The current approval is persisted application state: the reviewer drafts and
+the human replies YES or EDIT. A resumable Strands protocol-level interrupt is
+planned, but this build does not claim to implement one.
 
 The whole graph is built per account: the tools close over that account's
 ledger and the prompts carry that account's eligibility profile, so a draft
@@ -26,7 +26,7 @@ from chest.store.accounts import Account
 from chest.store.ledger import LedgerStore
 from chest.tools import forecast as fc
 from chest.tools import grants_gov
-from chest.tools.provenance import validate_draft
+from chest.tools.provenance import enforce_provenance, validate_draft
 
 
 def _model():
@@ -160,7 +160,9 @@ def build_agents(account: Account) -> dict[str, Agent]:
             f"(applicant type: {org.applicant_type}; annual budget "
             f"${org.annual_budget:,.0f}; state: {org.state}). "
             "For each candidate, call opportunity_detail and check applicant type, "
-            "org size, and any stated restrictions. Reject anything the org plainly "
+            "org size, and stated restrictions using only the published record. Never "
+            "infer an unstated requirement. If the synopsis defers eligibility to an "
+            "attachment, flag that for human verification. Reject anything the org plainly "
             "cannot win and say why in one line. Pass forward at most one opportunity: "
             "the best fit. Nobody's time gets spent drafting until you've done this."
         ),
@@ -201,7 +203,9 @@ def build_agents(account: Account) -> dict[str, Agent]:
                 "what it's worth, when it closes. That line is the only casual thing "
                 "here — a grant draft is register 3, so the rest is careful and "
                 "complete.\n\n"
-                "Then any blockers you found, one per line, plain. Then the draft "
+                "Every dollar amount anywhere in your response, including that "
+                "summary, must carry a valid ledger citation. Then any blockers you "
+                "found, one per line, plain. Then the draft "
                 "itself, verbatim and unedited: it is going to a program officer and "
                 "it keeps its own formal voice. Do not rewrite the draft in your own "
                 "voice.\n\n"
@@ -252,3 +256,21 @@ def get_graph(account: Account):
     if account.id not in _GRAPHS:
         _GRAPHS[account.id] = build_graph(account)
     return _GRAPHS[account.id]
+
+
+def reviewer_output(result) -> str:
+    """Return only the final reviewed node, never internal chain-of-work output."""
+    node_result = result.results.get("reviewer")
+    if node_result is None or not str(node_result).strip():
+        raise RuntimeError("grant graph did not produce a reviewed draft")
+    return str(node_result).removesuffix("\n")
+
+
+def run_gap_to_grant(account: Account, gap_amount: float, goes_negative_on: str) -> str:
+    """Run the graph and return only output that passes the provenance gate."""
+    result = get_graph(account)(
+        f"The org is projected ${gap_amount:,.0f} short by {goes_negative_on}. "
+        "Find and draft the grant that closes it."
+    )
+    entry_ids = {entry.id for entry in LedgerStore(account.id).posted()}
+    return enforce_provenance(reviewer_output(result), entry_ids)

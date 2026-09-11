@@ -32,3 +32,19 @@ def validate_draft(draft: str, valid_entry_ids: Collection[str]) -> ProvenanceRe
             violations.append(f"{amount} cites unknown ledger entry [{citation}]")
 
     return ProvenanceReport(valid=not violations, violations=violations)
+
+
+def enforce_provenance(output: str, valid_entry_ids: Collection[str]) -> str:
+    """Fail closed when generated output contains an ungrounded dollar figure.
+
+    Prompt instructions improve model behavior; this check is the application
+    boundary that prevents a non-compliant draft from being presented as ready.
+    """
+    report = validate_draft(output, valid_entry_ids)
+    if report.valid:
+        return output
+    details = "; ".join(report.violations)
+    return (
+        "BLOCKED: Chest found an unverified dollar figure and will not present "
+        f"this draft as ready. Correct the source citations and run again. {details}"
+    )

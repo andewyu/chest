@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+data/ledger.json
+data/drafts.json
+data/sessions
+tests
+docs

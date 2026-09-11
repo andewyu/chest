@@ -17,6 +17,7 @@ GRANTS_CACHE = DATA_DIR / "grants_cache.json"
 LEDGER_FILE = DATA_DIR / "ledger.json"          # pre-accounts, kept for migration
 LEDGERS_DIR = DATA_DIR / "ledgers"              # one file per account
 ACCOUNTS_FILE = DATA_DIR / "accounts.json"
+DRAFTS_FILE = DATA_DIR / "drafts.json"
 
 AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
 BEDROCK_MODEL_ID = os.getenv(
@@ -38,9 +39,11 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8000").rstrip("/")
 CHEST_CHANNEL = os.getenv("CHEST_CHANNEL", "telegram")
 TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 # iMessage via Blooio (https://blooio.com) — a third-party relay service, not
 # an Apple-sanctioned API. Apple publishes no public API for sending iMessage;
@@ -63,16 +66,23 @@ class OrgProfile:
     @classmethod
     def from_env(cls) -> "OrgProfile":
         return cls(
-            name=os.getenv("ORG_NAME", "Demo Nonprofit"),
+            name=os.getenv("ORG_NAME", "Riverside Neighborhood Heritage Museum"),
             ein=os.getenv("ORG_EIN", "00-0000000"),
             applicant_type=os.getenv(
                 "ORG_TYPE",
                 "Nonprofits having a 501(c)(3) status other than "
                 "institutions of higher education",
             ),
-            annual_budget=float(os.getenv("ORG_ANNUAL_BUDGET", "50000")),
+            annual_budget=float(os.getenv("ORG_ANNUAL_BUDGET", "42000")),
             state=os.getenv("ORG_STATE", "IN"),
         )
 
 
 ORG = OrgProfile.from_env()
+ORG_MISSION_KEYWORDS = tuple(
+    term.strip().lower()
+    for term in os.getenv(
+        "ORG_MISSION_KEYWORDS", "museum,local history,heritage preservation"
+    ).split(",")
+    if term.strip()
+)

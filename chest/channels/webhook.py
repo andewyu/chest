@@ -32,23 +32,37 @@ import re
 import httpx
 from fastapi import FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from twilio.request_validator import RequestValidator
 
-from chest.agents.treasurer import _human_date, _money, for_session, reset_session
+from chest.agents.treasurer import (
+    _human_date,
+    _money,
+    for_session,
+    is_approval,
+    is_edit,
+    reset_session,
+)
 from chest.channels import web
 from chest.config import (
     BLOOIO_API_KEY,
     BLOOIO_FROM_NUMBER,
     BLOOIO_WEBHOOK_SECRET,
+    PUBLIC_BASE_URL,
     PUBLIC_URL,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_BOT_USERNAME,
+    TELEGRAM_WEBHOOK_SECRET,
+    TWILIO_AUTH_TOKEN,
 )
 from chest.store.accounts import AccountStore
+from chest.store.drafts import DraftStore
 from chest.store.ledger import LedgerStore
 from chest.tools.forecast import forecast
 
 app = FastAPI(title="Chest")
 ACCOUNTS = AccountStore()
+MAX_MESSAGE_CHARS = 4000
+DRAFTS = DraftStore()
 
 # 8 characters from the link-code alphabet, however the human spaced it out.
 _CODE = re.compile(r"^[\s-]*([23456789ABCDEFGHJKMNPQRSTUVWXYZ][\s-]*){8}$", re.I)
@@ -134,7 +148,23 @@ def dashboard_slash(account_id: str):
 # ---------- Twilio WhatsApp Sandbox ----------
 
 @app.post("/whatsapp")
-async def whatsapp(From: str = Form(""), Body: str = Form("")):
+async def whatsapp(
+    request: Request,
+    From: str = Form(""),
+    Body: str = Form(""),
+    x_twilio_signature: str = Header(default=""),
+):
+    if not TWILIO_AUTH_TOKEN:
+        raise HTTPException(status_code=503, detail="WhatsApp webhook is not configured")
+    form = dict(await request.form())
+    webhook_url = f"{PUBLIC_BASE_URL}/whatsapp" if PUBLIC_BASE_URL else str(request.url)
+    # Twilio requires validating the complete URL and every form field with
+    # its official helper: https://www.twilio.com/docs/usage/security#validating-requests
+    if not RequestValidator(TWILIO_AUTH_TOKEN).validate(
+        webhook_url, form, x_twilio_signature
+    ):
+        raise HTTPException(status_code=401, detail="invalid webhook signature")
+    _validate_message(From, Body)
     reply = handle(session_id=f"whatsapp:{From}", text=Body)
     return PlainTextResponse(
         f"<Response><Message>{_escape(reply)}</Message></Response>",
@@ -145,7 +175,16 @@ async def whatsapp(From: str = Form(""), Body: str = Form("")):
 # ---------- Telegram ----------
 
 @app.post("/telegram")
-async def telegram(request: Request):
+async def telegram(
+    request: Request,
+    x_telegram_bot_api_secret_token: str = Header(default=""),
+):
+    if not TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Telegram webhook is not configured")
+    if not hmac.compare_digest(
+        x_telegram_bot_api_secret_token, TELEGRAM_WEBHOOK_SECRET
+    ):
+        raise HTTPException(status_code=401, detail="invalid webhook secret")
     update = await request.json()
     msg = update.get("message") or update.get("edited_message") or {}
     chat_id = str((msg.get("chat") or {}).get("id", ""))
@@ -153,6 +192,7 @@ async def telegram(request: Request):
     if not chat_id or not text:
         return {"ok": True}
 
+    _validate_message(chat_id, text)
     reply = handle(session_id=f"telegram:{chat_id}", text=text)
     send_telegram(chat_id, reply)
     return {"ok": True}
@@ -163,11 +203,16 @@ def send_telegram(chat_id: str, text: str) -> None:
     if not TELEGRAM_BOT_TOKEN:
         print(f"[telegram:{chat_id}] {text}")
         return
-    httpx.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        json={"chat_id": chat_id, "text": text},
-        timeout=15,
-    )
+    # Telegram limits sendMessage text to 4,096 characters. Keep a little
+    # headroom and preserve paragraphs when possible so a grant draft does not
+    # fail after the expensive agent run has already completed.
+    for chunk in _message_chunks(text):
+        response = httpx.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": chunk},
+            timeout=15,
+        )
+        response.raise_for_status()
 
 
 _BOT_USERNAME_CACHE: str | None = None
@@ -199,7 +244,9 @@ def _bot_username() -> str:
 @app.post("/imessage")
 async def imessage(request: Request, x_blooio_signature: str = Header(default="")):
     body = await request.body()
-    if BLOOIO_WEBHOOK_SECRET and not _verify_blooio_signature(body, x_blooio_signature):
+    if not BLOOIO_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="iMessage webhook is not configured")
+    if not _verify_blooio_signature(body, x_blooio_signature):
         raise HTTPException(status_code=401, detail="bad signature")
 
     payload = await request.json()
@@ -212,6 +259,7 @@ async def imessage(request: Request, x_blooio_signature: str = Header(default=""
     if not chat_id or not text:
         return {"ok": True}
 
+    _validate_message(chat_id, text)
     reply = handle(session_id=f"imessage:{chat_id}", text=text)
     send_blooio(chat_id, reply)
     return {"ok": True}
@@ -232,12 +280,13 @@ def send_blooio(chat_id: str, text: str) -> None:
     payload: dict = {"text": text}
     if BLOOIO_FROM_NUMBER:
         payload["from_number"] = BLOOIO_FROM_NUMBER
-    httpx.post(
+    response = httpx.post(
         f"https://api.blooio.com/v2/api/chats/{quote(chat_id, safe='')}/messages",
         headers={"Authorization": f"Bearer {BLOOIO_API_KEY}"},
         json=payload,
         timeout=15,
     )
+    response.raise_for_status()
 
 
 # ---------- shared ----------
@@ -296,6 +345,14 @@ def handle(session_id: str, text: str) -> str:
         )
 
     try:
+        draft_owner = f"{account.id}:{session_id}"
+        if DRAFTS.has_pending(draft_owner) and is_approval(text):
+            DRAFTS.approve(draft_owner)
+            return "draft approved for human filing. Chest did not submit it."
+        if DRAFTS.has_pending(draft_owner) and is_edit(text):
+            instructions = re.sub(r"^\s*edit\s*:?\s*", "", text, flags=re.I)
+            DRAFTS.request_edit(draft_owner, instructions or "No details provided")
+            return "revision request saved. Chest did not submit the draft."
         reply = str(for_session(session_id, account)(text)).strip()
         # A model that answers with tool calls and no text would otherwise
         # send an empty message into the thread.
@@ -303,6 +360,33 @@ def handle(session_id: str, text: str) -> str:
     except Exception as exc:  # keep the thread alive; never 500 at a judge
         print(f"[error] {session_id} ({account.id}): {type(exc).__name__}: {exc}")
         return "something broke on my end. say that again?"
+
+
+def _validate_message(session_id: str, text: str) -> None:
+    if not session_id.strip():
+        raise HTTPException(status_code=422, detail="missing sender")
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="empty message")
+    if len(text) > MAX_MESSAGE_CHARS:
+        raise HTTPException(status_code=422, detail="message is too long")
+
+
+def _message_chunks(text: str, limit: int = 4000) -> list[str]:
+    """Split outbound text without losing or reordering any characters."""
+    if not text:
+        return [""]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit + 1)
+        if split_at <= 0:
+            split_at = limit
+        else:
+            split_at += 1
+        chunks.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+    chunks.append(remaining)
+    return chunks
 
 
 def _escape(s: str) -> str:

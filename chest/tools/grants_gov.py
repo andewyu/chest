@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from chest.config import GRANTS_CACHE
+from chest.config import GRANTS_CACHE, ORG_MISSION_KEYWORDS
 
 BASE = "https://api.grants.gov/v1/api"
 
@@ -44,9 +44,12 @@ class Opportunity:
     applicant_types: list[str]
     description: str
     url: str
+    eligibility_notes: str = ""
 
     def brackets(self, gap: float) -> bool:
         """True if this opportunity's award range contains the forecasted gap."""
+        if self.award_floor in (None, 0) and self.award_ceiling in (None, 0):
+            return False
         floor = self.award_floor if self.award_floor not in (None, 0) else 0.0
         ceiling = self.award_ceiling if self.award_ceiling not in (None, 0) else None
         if ceiling is None:
@@ -101,16 +104,36 @@ def fetch(opportunity_id: str | int) -> Opportunity | None:
         ],
         description=_strip(synopsis.get("synopsisDesc", "")),
         url=f"https://www.grants.gov/search-results-detail/{d.get('id', opportunity_id)}",
+        eligibility_notes=_strip(synopsis.get("applicantEligibilityDesc", "")),
     )
 
 
-def match_gap(gap: float, cache: list[Opportunity] | None = None) -> list[Opportunity]:
-    """The core retrieval step: the dollar gap IS the query."""
+def relevance_score(opportunity: Opportunity, terms: list[str] | tuple[str, ...]) -> int:
+    """Simple, inspectable mission match; title matches carry extra weight."""
+    title = opportunity.title.lower()
+    description = opportunity.description.lower()
+    return sum(3 if term in title else 1 if term in description else 0 for term in terms)
+
+
+def match_gap(
+    gap: float,
+    cache: list[Opportunity] | None = None,
+    mission_terms: list[str] | tuple[str, ...] | None = None,
+) -> list[Opportunity]:
+    """Match the exact dollar gap, then require an inspectable mission signal."""
     pool = cache if cache is not None else load_cache()
-    hits = [o for o in pool if o.brackets(gap)]
-    # Tightest bracket first — an award range snug around the gap is the best fit.
-    hits.sort(key=lambda o: (o.award_ceiling or 1e12) - (o.award_floor or 0))
-    return hits
+    terms = ORG_MISSION_KEYWORDS if mission_terms is None else tuple(mission_terms)
+    scored = [(relevance_score(o, terms), o) for o in pool if o.brackets(gap)]
+    # A numerically perfect match for the wrong mission wastes a volunteer's
+    # time. Require relevance, then prefer the tightest award bracket.
+    hits = [(score, o) for score, o in scored if score > 0]
+    hits.sort(
+        key=lambda item: (
+            -item[0],
+            (item[1].award_ceiling or 1e12) - (item[1].award_floor or 0),
+        )
+    )
+    return [o for _, o in hits]
 
 
 # ---------- cache ----------

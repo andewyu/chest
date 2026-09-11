@@ -13,8 +13,8 @@ import time
 from chest.tools import grants_gov as gg
 
 KEYWORDS = [
-    "community", "food", "youth", "garden", "nutrition",
-    "neighborhood", "volunteer", "capacity building", "rural", "urban agriculture",
+    "museum", "local history", "heritage preservation", "historic preservation",
+    "museum education", "collections care", "cultural heritage", "public history",
 ]
 
 
@@ -23,6 +23,8 @@ def main() -> None:
     ap.add_argument("--rows", type=int, default=40, help="rows per keyword")
     ap.add_argument("--gap", type=float, default=None)
     args = ap.parse_args()
+    if args.rows < 1:
+        ap.error("--rows must be at least 1")
 
     seen: dict[str, dict] = {}
     for kw in KEYWORDS:

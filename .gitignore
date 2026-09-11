@@ -10,11 +10,11 @@ __pycache__/
 .ruff_cache/
 .DS_Store
 # Generated runtime state: caches, books, and the accounts file (which holds
-# link codes). Nothing in data/ is source.
-data/grants_cache.json
+# link codes). The checked-in grant snapshot is source/demo data.
 data/ledger.json
 data/accounts.json
 data/ledgers/
+data/drafts.json
 data/sessions/
 dist/
 build/
