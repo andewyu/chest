@@ -12,6 +12,7 @@ import json
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Iterable, Literal
 
 from chest.config import CHEST_STORE, DDB_LEDGER_TABLE, LEDGER_FILE
@@ -88,6 +89,12 @@ class LedgerStore:
         return entry
 
     def discard(self, entry_id: str) -> bool:
+        entry = self.by_id(entry_id)
+        if entry is None or entry.state != "pending":
+            return False
+        if self._backend == "dynamodb":
+            self._table.delete_item(Key={"id": entry_id})
+            return True
         entries = [e for e in self.all() if e.id != entry_id]
         self._replace_all(entries)
         return True
@@ -101,7 +108,7 @@ class LedgerStore:
 
     def _upsert(self, entry: Entry) -> None:
         if self._backend == "dynamodb":
-            self._table.put_item(Item=asdict(entry))
+            self._table.put_item(Item=_to_dynamodb(asdict(entry)))
             return
         entries = [e for e in self.all() if e.id != entry.id]
         entries.append(entry)
@@ -115,8 +122,17 @@ class LedgerStore:
 
 
 def _coerce(key: str, value):
-    from decimal import Decimal
-
     if isinstance(value, Decimal):
         return float(value)
+    return value
+
+
+def _to_dynamodb(value):
+    """Convert Python floats recursively because DynamoDB rejects them."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _to_dynamodb(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_dynamodb(item) for item in value]
     return value

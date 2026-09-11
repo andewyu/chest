@@ -9,17 +9,22 @@ the interactive path into it.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import date
 
 from strands import Agent, tool
 from strands.models import BedrockModel
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
 
-from chest.config import BEDROCK_MODEL_ID, ORG
+from chest.config import BEDROCK_MODEL_ID, DATA_DIR, ORG
 from chest.store.ledger import Entry, LedgerStore
 from chest.tools import forecast as fc
 
 STORE = LedgerStore()
+MODEL = BedrockModel(model_id=BEDROCK_MODEL_ID)
+SESSION_DIR = DATA_DIR / "sessions"
 
 
 @tool
@@ -63,10 +68,7 @@ def current_balance() -> dict:
     return {"balance": STORE.balance(), "outlook": gap.summary()}
 
 
-TREASURER = Agent(
-    model=BedrockModel(model_id=BEDROCK_MODEL_ID),
-    name="treasurer",
-    system_prompt=(
+TREASURER_PROMPT = (
         f"You are Chest, the treasurer for {ORG.name}. You talk to a volunteer "
         "with a day job and no finance background, over a chat thread on their phone.\n\n"
         "Rules:\n"
@@ -78,9 +80,34 @@ TREASURER = Agent(
         "- Never invent a number. If you don't have it in the ledger, say so.\n"
         "- You never submit a grant application. You draft; a human files.\n"
         "- No emoji unless they use one first."
-    ),
-    tools=[log_transaction, confirm_transaction, discard_transaction, current_balance],
 )
+
+
+def session_key(session_id: str) -> str:
+    """Turn a channel identifier into an opaque, filesystem-safe session id."""
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
+
+
+def build_treasurer(session_id: str) -> Agent:
+    """Create one persisted Strands conversation for one chat session.
+
+    Agent construction is intentionally per request while the Bedrock model
+    provider is reused. This follows Strands' session guidance and prevents one
+    phone/chat from inheriting another person's conversation.
+    https://strandsagents.com/docs/user-guide/concepts/agents/session-management/#create-an-agent-per-conversation
+    """
+    session_manager = SnapshotSessionManager(
+        session_id=session_key(session_id),
+        storage=LocalFileStorage(str(SESSION_DIR)),
+    )
+    return Agent(
+        model=MODEL,
+        agent_id="treasurer",
+        name="treasurer",
+        system_prompt=TREASURER_PROMPT,
+        tools=[log_transaction, confirm_transaction, discard_transaction, current_balance],
+        session_manager=session_manager,
+    )
 
 _AFFIRM = re.compile(r"^\s*(y|yes|yep|yeah|ok|okay|confirm|approve)\b", re.I)
 _EDIT = re.compile(r"^\s*edit\b", re.I)

@@ -20,6 +20,7 @@ from chest.config import BEDROCK_MODEL_ID, ORG
 from chest.store.ledger import LedgerStore
 from chest.tools import forecast as fc
 from chest.tools import grants_gov
+from chest.tools.provenance import validate_draft
 
 MODEL = BedrockModel(model_id=BEDROCK_MODEL_ID)
 
@@ -84,6 +85,14 @@ def ledger_entries(kind: str = "") -> list[dict]:
     ]
 
 
+@tool
+def validate_draft_provenance(draft: str) -> dict:
+    """Verify that every dollar figure cites an existing posted ledger entry."""
+    entry_ids = {entry.id for entry in LedgerStore().posted()}
+    report = validate_draft(draft, entry_ids)
+    return {"valid": report.valid, "violations": report.violations}
+
+
 # --------------------------------------------------------------------------
 # Agents
 # --------------------------------------------------------------------------
@@ -146,7 +155,10 @@ REVIEWER = Agent(
     model=MODEL,
     name="compliance_reviewer",
     system_prompt=(
-        "You are Chest's Compliance Reviewer. Check the draft against the "
+        "You are Chest's Compliance Reviewer. Call validate_draft_provenance on "
+        "the complete draft. If it reports any violation, treat the draft as "
+        "blocked and list what must be corrected; never present it as ready. "
+        "Check the draft against the "
         "opportunity's stated requirements: required sections, page/word limits, "
         "deadline, and eligibility. Flag every uncited dollar figure as a blocker. "
         "Then produce a ONE-LINE summary a volunteer treasurer can read on a phone, "
@@ -154,6 +166,7 @@ REVIEWER = Agent(
         "'Reply YES to approve this draft, or EDIT to tell me what to change.' "
         "Chest never submits an application. Do not imply that it does."
     ),
+    tools=[validate_draft_provenance, opportunity_detail],
 )
 
 
@@ -172,6 +185,12 @@ def build_graph():
     b.add_edge("drafter", "reviewer")
 
     b.set_entry_point("forecaster")
+    # Bound both spend and wall-clock time. The graph is linear today, so five
+    # node executions is exactly one complete Gap-to-Grant pass.
+    # https://strandsagents.com/docs/api/python/strands.multiagent.graph/#set-max-node-executions
+    b.set_max_node_executions(5)
+    b.set_execution_timeout(300)
+    b.set_node_timeout(90)
     return b.build()
 
 

@@ -23,7 +23,7 @@ import httpx
 from fastapi import FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from chest.agents.treasurer import TREASURER
+from chest.agents.treasurer import build_treasurer
 from chest.config import BLOOIO_API_KEY, BLOOIO_FROM_NUMBER, BLOOIO_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN
 
 app = FastAPI(title="Chest")
@@ -128,7 +128,7 @@ def send_blooio(chat_id: str, text: str) -> None:
 def handle(session_id: str, text: str) -> str:
     """Single entry point. Session id is the phone number or chat id."""
     try:
-        result = TREASURER(text)
+        result = build_treasurer(session_id)(text)
         return str(result)
     except Exception as exc:  # keep the thread alive; never 500 at a judge
         print(f"[error] {exc}")
