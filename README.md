@@ -133,6 +133,10 @@ Grant submission · voice memo logging · bank/Plaid reconciliation · officer h
 
 ## Quickstart
 
+Requires **Python 3.10 or newer**. On macOS, check `python3 --version` before
+creating the environment; the system Python may still be 3.9 and cannot install
+current Strands releases.
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt

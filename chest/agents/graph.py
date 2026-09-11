@@ -26,6 +26,7 @@ from chest.store.accounts import Account
 from chest.store.ledger import LedgerStore
 from chest.tools import forecast as fc
 from chest.tools import grants_gov
+from chest.tools.provenance import validate_draft
 
 
 def _model():
@@ -95,7 +96,20 @@ def _tools(account: Account):
             for e in entries
         ]
 
-    return run_forecast, find_grants_for_gap, opportunity_detail, ledger_entries
+    @tool
+    def validate_draft_provenance(draft: str) -> dict:
+        """Verify every dollar figure against this account's posted entries."""
+        entry_ids = {entry.id for entry in store.posted()}
+        report = validate_draft(draft, entry_ids)
+        return {"valid": report.valid, "violations": report.violations}
+
+    return (
+        run_forecast,
+        find_grants_for_gap,
+        opportunity_detail,
+        ledger_entries,
+        validate_draft_provenance,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -104,7 +118,13 @@ def _tools(account: Account):
 
 def build_agents(account: Account) -> dict[str, Agent]:
     """The five agents, wired to one account's books and eligibility profile."""
-    run_forecast, find_grants_for_gap, opportunity_detail, ledger_entries = _tools(account)
+    (
+        run_forecast,
+        find_grants_for_gap,
+        opportunity_detail,
+        ledger_entries,
+        validate_draft_provenance,
+    ) = _tools(account)
     org = account.profile()
     model = _model()
 
@@ -170,7 +190,9 @@ def build_agents(account: Account) -> dict[str, Agent]:
         name="compliance_reviewer",
         system_prompt=compose(
             "You are Chest's Compliance Reviewer, and the last stop before a human "
-            "reads anything. Check the draft against the opportunity's stated "
+            "reads anything. Call validate_draft_provenance on the complete draft. "
+            "If it reports any violation, block the draft and list what must be "
+            "corrected; never present it as ready. Check the draft against the opportunity's stated "
             "requirements: required sections, page and word limits, deadline, "
             "eligibility. Flag every uncited dollar figure as a blocker.",
             extra=(
@@ -188,6 +210,7 @@ def build_agents(account: Account) -> dict[str, Agent]:
                 "Chest never submits an application. Do not imply that it might."
             ),
         ),
+        tools=[validate_draft_provenance, opportunity_detail],
     )
 
     return {
@@ -212,6 +235,12 @@ def build_graph(account: Account):
     b.add_edge("drafter", "reviewer")
 
     b.set_entry_point("forecaster")
+    # Bound both spend and wall-clock time. The graph is linear today, so five
+    # node executions is exactly one complete Gap-to-Grant pass.
+    # https://strandsagents.com/docs/api/python/strands.multiagent.graph/#set-max-node-executions
+    b.set_max_node_executions(5)
+    b.set_execution_timeout(300)
+    b.set_node_timeout(90)
     return b.build()
 
 

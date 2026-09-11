@@ -270,7 +270,7 @@ def handle(session_id: str, text: str) -> str:
             if found is None:
                 return "that code doesn't match an organization. check it and try again?"
             ACCOUNTS.link(session_id, found.id)
-            reset_session(session_id)
+            reset_session(session_id, found)
             balance = _money(LedgerStore(found.id).balance())
             return (
                 f"linked to {found.name}. balance is {balance}.\n\n"
@@ -285,7 +285,7 @@ def handle(session_id: str, text: str) -> str:
 
     if low in {"/unlink", "unlink"}:
         ACCOUNTS.unlink(session_id)
-        reset_session(session_id)
+        reset_session(session_id, account)
         return f"unlinked from {account.name}. text a code to link somewhere else."
 
     if low in {"/whoami", "whoami", "/books"}:

@@ -15,20 +15,22 @@ per identity too, so "yes" always confirms *that* thread's pending entry.
 """
 from __future__ import annotations
 
+import hashlib
 import re
-from collections import OrderedDict
+import shutil
 from datetime import date
 
 from strands import Agent, tool
-from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.models import BedrockModel
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
 
 from chest.agents.voice import compose
-from chest.config import BEDROCK_MODEL_ID, CHEST_FAKE_MODEL
+from chest.config import BEDROCK_MODEL_ID, CHEST_FAKE_MODEL, DATA_DIR
 from chest.store.accounts import Account
 from chest.store.ledger import Entry, LedgerStore
 from chest.tools import forecast as fc
-
+SESSION_DIR = DATA_DIR / "sessions"
 
 def _money(amount: float) -> str:
     """Format money once, here, so the model only ever copies a string.
@@ -217,46 +219,36 @@ def _model():
     return BedrockModel(model_id=BEDROCK_MODEL_ID)
 
 
-def _build(account: Account) -> Agent:
-    """A fresh treasurer for one account, with an empty history."""
+def _build(account: Account, session_id: str = "test") -> Agent:
+    """Restore one account-scoped conversation for one channel identity."""
+    manager = SnapshotSessionManager(
+        session_id=session_key(f"{account.id}:{session_id}"),
+        storage=LocalFileStorage(str(SESSION_DIR)),
+    )
     return Agent(
         model=_model(),
+        agent_id="treasurer",
         name="treasurer",
         system_prompt=compose(_role(account)),
-        conversation_manager=SlidingWindowConversationManager(window_size=40),
         tools=_tools(account),
+        session_manager=manager,
     )
 
 
-# (identity key, account id) -> Agent. Bounded so a public bot can't grow this
-# without limit; the oldest thread falls out of memory first. Process-local by
-# design — the durable record is the ledger, not the chat history. The account
-# id is part of the key so a re-linked phone can never inherit the agent, and
-# therefore the tools, of the org it just left.
-_SESSIONS: "OrderedDict[tuple[str, str], Agent]" = OrderedDict()
-_MAX_SESSIONS = 200
-
-
 def for_session(session_id: str, account: Account) -> Agent:
-    """The agent for one chat thread on one account's books."""
-    key = (session_id, account.id)
-    agent = _SESSIONS.pop(key, None)
-    if agent is None:
-        agent = _build(account)
-    _SESSIONS[key] = agent
-    while len(_SESSIONS) > _MAX_SESSIONS:
-        _SESSIONS.popitem(last=False)
-    return agent
+    """Create an agent that restores only this account and identity's thread."""
+    return _build(account, session_id)
 
 
-def reset_session(session_id: str, account: Account | None = None) -> None:
-    """Forget a thread's history. The ledger is untouched.
+def reset_session(session_id: str, account: Account) -> None:
+    """Forget this identity's account-scoped history; leave the ledger alone."""
+    key = session_key(f"{account.id}:{session_id}")
+    shutil.rmtree(SESSION_DIR / key, ignore_errors=True)
 
-    With no account, forgets this identity's thread on every account it has
-    talked to — which is what unlinking means.
-    """
-    for key in [k for k in _SESSIONS if k[0] == session_id and (account is None or k[1] == account.id)]:
-        _SESSIONS.pop(key, None)
+
+def session_key(session_id: str) -> str:
+    """Turn a channel identifier into an opaque, filesystem-safe session id."""
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
 
 
 _AFFIRM = re.compile(r"^\s*(y|yes|yep|yeah|ok|okay|confirm|approve)\b", re.I)

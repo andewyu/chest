@@ -15,6 +15,7 @@ data/grants_cache.json
 data/ledger.json
 data/accounts.json
 data/ledgers/
+data/sessions/
 dist/
 build/
 *.egg-info/
