@@ -157,6 +157,7 @@ class LedgerStore:
         # server and the bot both write here.
         tmp = self.path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps([asdict(e) for e in entries], indent=2))
+        os.chmod(tmp, 0o600)
         os.replace(tmp, self.path)
 
 

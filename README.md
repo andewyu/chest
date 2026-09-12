@@ -209,7 +209,7 @@ HTTP, links a phone to each, and POSTs the exact payloads Telegram, Twilio and
 Blooio send, against a throwaway ledger.
 
 Other scripts: `scripts/seed_ledger.py` (sample books for an account),
-`scripts/cache_grants.py` (~250 live Grants.gov opportunities),
+`scripts/cache_grants.py` (refresh the checked-in 112-opportunity Grants.gov snapshot),
 `scripts/sweep.py` (the background run), `scripts/migrate_accounts.py`
 (lift a pre-accounts ledger into an account).
 

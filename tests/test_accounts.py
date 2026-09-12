@@ -112,6 +112,12 @@ def test_codes_are_unique_across_a_crowd(accounts):
     assert len(codes) == 50
 
 
+def test_account_file_with_link_codes_is_owner_only(accounts):
+    accounts.create("Private Org")
+
+    assert accounts._path.stat().st_mode & 0o777 == 0o600
+
+
 def test_rotating_a_code_invalidates_the_old_one(accounts, two_orgs):
     garden, _ = two_orgs
     old = garden.link_code

@@ -29,3 +29,14 @@ def test_account_is_part_of_the_persisted_session_key(monkeypatch):
         treasurer.session_key("acct_one:telegram:123"),
         treasurer.session_key("acct_two:telegram:123"),
     ]
+
+
+def test_session_directory_is_owner_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(treasurer, "SESSION_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(treasurer, "Agent", lambda **kwargs: kwargs)
+
+    treasurer.for_session(
+        "telegram:123", Account(name="Private Org", id="acct_private")
+    )
+
+    assert treasurer.SESSION_DIR.stat().st_mode & 0o777 == 0o700

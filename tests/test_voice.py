@@ -75,3 +75,9 @@ def test_readback_says_the_date_only_when_it_isn_t_today(scratch_ledger):
 
 def test_money_never_loses_its_comma():
     assert treasurer._money(9720.5) == "$9,720.50"
+
+
+def test_local_ledger_file_is_owner_only(scratch_ledger):
+    _tool("log_transaction")(amount=-10.0, kind="expense", memo="private")
+
+    assert (scratch_ledger / "acct_test.json").stat().st_mode & 0o777 == 0o600

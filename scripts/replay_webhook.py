@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
+from twilio.request_validator import RequestValidator  # noqa: E402
 
 import chest.store.ledger as ledger_module  # noqa: E402
 from chest.channels import webhook  # noqa: E402
@@ -38,6 +39,9 @@ def _sandbox() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="chest-replay-"))
     ledger_module.LEDGERS_DIR = tmp / "ledgers"
     webhook.ACCOUNTS = AccountStore(path=tmp / "accounts.json")
+    webhook.TELEGRAM_WEBHOOK_SECRET = "replay-telegram-secret"
+    webhook.TWILIO_AUTH_TOKEN = "replay-twilio-token"
+    webhook.BLOOIO_WEBHOOK_SECRET = "replay-blooio-secret"
     webhook.send_telegram = lambda chat_id, text: SENT.append((f"telegram:{chat_id}", text))
     webhook.send_blooio = lambda chat_id, text: SENT.append((f"imessage:{chat_id}", text))
 
@@ -64,6 +68,16 @@ def telegram_update(chat_id: int, text: str) -> dict:
             "text": text,
         },
     }
+
+
+def post_telegram(client: TestClient, chat_id: int, text: str):
+    return client.post(
+        "/telegram",
+        json=telegram_update(chat_id, text),
+        headers={
+            "X-Telegram-Bot-Api-Secret-Token": webhook.TELEGRAM_WEBHOOK_SECRET
+        },
+    )
 
 
 def blooio_event(from_number: str, text: str) -> dict:
@@ -106,31 +120,31 @@ def main() -> int:
 
     print("\nlinking: an unlinked phone gets nowhere near an agent")
     SENT.clear()
-    client.post("/telegram", json=telegram_update(555, "whats the balance"))
+    post_telegram(client, 555, "whats the balance")
     check("unlinked phone is told to sign up", "sign up at" in last().lower(), last()[:60])
 
-    client.post("/telegram", json=telegram_update(555, "AAAAAAAA"))
+    post_telegram(client, 555, "AAAAAAAA")
     check("a wrong code is refused", "doesn't match" in last(), last()[:60])
 
-    client.post("/telegram", json=telegram_update(555, garden_code.lower()))
+    post_telegram(client, 555, garden_code.lower())
     check("the right code links the phone", "linked to Riverside Garden Collective" in last(), last()[:60])
 
-    client.post("/telegram", json=telegram_update(777, f" {shelter_code[:4]}-{shelter_code[4:]} "))
+    post_telegram(client, 777, f" {shelter_code[:4]}-{shelter_code[4:]} ")
     check("a code survives being typed with spaces and a dash",
           "linked to Eastside Animal Shelter" in last(), last()[:60])
 
     print("\nthe thread: log -> confirm -> post")
     SENT.clear()
-    client.post("/telegram", json=telegram_update(555, "paid 47 dollars for hoses"))
+    post_telegram(client, 555, "paid 47 dollars for hoses")
     check("logs and reads the entry back", "$47.00" in last() and "confirm" in last().lower(), last())
 
-    client.post("/telegram", json=telegram_update(555, "yes"))
+    post_telegram(client, 555, "yes")
     check("posts on confirmation", "posted" in last().lower(), last())
     check("replies to the right chat", SENT[-1][0] == "telegram:555")
 
     print("\nisolation: the two orgs must not see each other")
     SENT.clear()
-    client.post("/telegram", json=telegram_update(777, "yes"))
+    post_telegram(client, 777, "yes")
     check("the other org's phone has nothing to confirm", "posted" not in last().lower(), last())
 
     from chest.store.ledger import LedgerStore
@@ -143,20 +157,24 @@ def main() -> int:
           f"garden ${garden.balance():,.2f} / shelter ${shelter.balance():,.2f}")
 
     SENT.clear()
-    client.post("/telegram", json=telegram_update(777, "/whoami"))
+    post_telegram(client, 777, "/whoami")
     check("each phone knows which books it keeps", "Eastside Animal Shelter" in last(), last()[:60])
 
     print("\nthread controls")
     SENT.clear()
-    client.post("/telegram", json=telegram_update(555, "/reset"))
+    post_telegram(client, 555, "/reset")
     check("/reset keeps the account, drops the history",
           "fresh thread" in last().lower() and "Riverside" in last(), last())
 
-    client.post("/telegram", json=telegram_update(555, "/unlink"))
-    client.post("/telegram", json=telegram_update(555, "whats the balance"))
+    post_telegram(client, 555, "/unlink")
+    post_telegram(client, 555, "whats the balance")
     check("/unlink puts the phone back outside", "sign up at" in last().lower(), last()[:60])
 
-    r = client.post("/telegram", json={"update_id": 101})
+    r = client.post(
+        "/telegram",
+        json={"update_id": 101},
+        headers={"X-Telegram-Bot-Api-Secret-Token": webhook.TELEGRAM_WEBHOOK_SECRET},
+    )
     check("an update with no message is ignored", r.status_code == 200)
 
     print("\ndashboard")
@@ -168,7 +186,15 @@ def main() -> int:
     check("unknown account 404s", r.status_code == 404)
 
     print("\nwhatsapp (twilio form post -> twiml)")
-    r = client.post("/whatsapp", data={"From": "whatsapp:+15551234567", "Body": "hi"})
+    form = {"From": "whatsapp:+15551234567", "Body": "hi"}
+    signature = RequestValidator(webhook.TWILIO_AUTH_TOKEN).compute_signature(
+        "http://testserver/whatsapp", form
+    )
+    r = client.post(
+        "/whatsapp",
+        data=form,
+        headers={"X-Twilio-Signature": signature},
+    )
     check("answers in twiml", r.status_code == 200 and "<Response><Message>" in r.text, r.text[:70])
 
     print("\nimessage (blooio, hmac-signed)")
@@ -187,13 +213,8 @@ def main() -> int:
     r = post_imessage(blooio_event("+15551234567", "hello"))
     check("accepts a real message", r.status_code == 200 and bool(SENT))
 
-    if secret:
-        r = post_imessage(blooio_event("+15551234567", "hi"), signature="deadbeef")
-        check("rejects a bad signature", r.status_code == 401, f"status {r.status_code}")
-    else:
-        print("  SKIP  BLOOIO_WEBHOOK_SECRET is empty, so the signature check is off")
-        print("        and this replay cannot exercise it. Set it before you trust")
-        print("        this endpoint on a public URL — anyone could POST to it.")
+    r = post_imessage(blooio_event("+15551234567", "hi"), signature="deadbeef")
+    check("rejects a bad signature", r.status_code == 401, f"status {r.status_code}")
 
     SENT.clear()
     r = post_imessage({"event": "message.delivered", "data": {}})

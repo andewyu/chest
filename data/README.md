@@ -17,6 +17,6 @@ Refresh before recording or presenting:
 python -m scripts.cache_grants --gap 14849
 ```
 
-The cache is public grant data and contains no credentials. `ledger.json`,
-session snapshots, and draft approval state remain ignored because they contain
-organization-specific information.
+The cache is public grant data and contains no credentials. Account records,
+per-organization ledgers, session snapshots, and draft approval state remain
+ignored because they contain organization-specific information or link codes.

@@ -103,6 +103,7 @@ class AccountStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(data, indent=2))
+        os.chmod(tmp, 0o600)
         os.replace(tmp, self._path)
 
     # ---------- accounts ----------

@@ -221,6 +221,8 @@ def _model():
 
 def _build(account: Account, session_id: str = "test") -> Agent:
     """Restore one account-scoped conversation for one channel identity."""
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    SESSION_DIR.chmod(0o700)
     manager = SnapshotSessionManager(
         session_id=session_key(f"{account.id}:{session_id}"),
         storage=LocalFileStorage(str(SESSION_DIR)),
