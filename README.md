@@ -63,20 +63,29 @@ web signup ──> Account (org profile + 8-char link code)
 
 ## Architecture
 
-```
-EventBridge Scheduler (background sweep — every account, no human trigger)
-        │
-        ▼
-┌───────────────────────────────────────────────────┐
-│  Strands multi-agent graph, on AgentCore Runtime  │
-│                                                   │
-│  Forecaster → Scout → Eligibility Screener →      │
-│  Drafter → Compliance Reviewer                    │
-└───────────────────────────────────────────────────┘
-        │                              │
-        ▼                              ▼
-  Ledger store, per account      approval prompt → chat channels
-  balances, dues, history     "Reply YES to approve / EDIT"
+```mermaid
+flowchart LR
+    Human[Volunteer treasurer] --> Channels[Telegram / WhatsApp / iMessage]
+    Channels --> Signed[Signed webhook boundary]
+    Signed --> Resolve[Resolve channel identity to account]
+    Resolve --> Chat[Account-scoped Treasurer agent]
+    Chat --> Ledger[(Account-scoped ledger)]
+
+    Schedule[Background sweep] --> Forecast[Forecast exact funding gap]
+    Ledger --> Forecast
+    Forecast --> Graph
+
+    subgraph Graph[Strands five-agent graph]
+      F[Forecaster] --> S[Scout] --> E[Eligibility Screener]
+      E --> D[Drafter] --> R[Compliance Reviewer]
+    end
+
+    Graph --> Provenance[Dollar-citation hard gate]
+    Provenance --> Approval[Persisted YES / EDIT approval]
+    Approval --> Channels
+
+    Runtime[AgentCore Runtime entrypoint\nprepared; AWS deployment pending] -. hosts .-> Chat
+    Runtime -. hosts .-> Graph
 ```
 
 | Agent | Job |
@@ -97,7 +106,7 @@ not be described as having that feature yet.
 |---|---|
 | Input channel | Twilio WhatsApp Sandbox webhook / Telegram Bot API / iMessage via [Blooio](https://blooio.com) (see honesty note below) |
 | Orchestration | Strands Agents SDK, multi-agent graph (`GraphBuilder`) |
-| Runtime | Amazon Bedrock AgentCore Runtime |
+| Runtime | AgentCore Runtime entrypoint and container prepared; authenticated AWS deployment pending |
 | Memory | Strands snapshot sessions locally; AgentCore Memory is planned |
 | Identity | Signed channel webhooks; AgentCore Identity is planned |
 | Observability | OpenTelemetry instrumentation, visible after AgentCore deployment |
